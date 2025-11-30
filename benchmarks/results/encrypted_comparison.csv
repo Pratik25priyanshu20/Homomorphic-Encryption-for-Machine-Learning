@@ -1,0 +1,6 @@
+Metric,Plaintext,Encrypted
+Accuracy,83.33%,80.00%
+Precision,84.62%,76.92%
+Recall,78.57%,76.92%
+F1-Score,81.48%,76.92%
+Inference Time,0.0023 ms,4.78 ms
