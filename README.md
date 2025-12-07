@@ -8,6 +8,28 @@ End-to-end, privacy-preserving ML for heart-disease prediction on encrypted data
 - **Accuracy retained:** Encrypted predictions align with plaintext after calibration (see calibration step).
 - **Production shape:** FastAPI server, Python SDK, Streamlit dashboard, calibration & eval scripts.
 
+
+## Problem & Solution (quick story)
+**The dilemma:** Sensitive medical/financial data must stay encrypted (GDPR, HIPAA, etc.), but ML inference normally needs plaintext.  
+**This system:** Uses CKKS HE so the server never decrypts. Client-owned keys, encrypted features, encrypted logits back, plaintext never leaves the client. Works today with LR + shallow NN, with only modest latency overhead on CPU.
+
+---
+## Problem Statement — The €2B GDPR Challenge
+- GDPR Article 32 → data must be encrypted  
+- ML inference → normally needs plaintext  
+- Sharing medical/financial data → violates GDPR Article 9  
+**Result:** €2B+ in trapped data value every year (no safe way to run models in the cloud).
+
+Real-World Impact  
+- 🏥 Hospitals cannot use cloud AI without exposing patient data  
+- 🏦 Banks cannot outsource fraud detection without sharing transactions  
+- 🛡️ Insurers cannot evaluate risk using external ML providers  
+
+**This project solves this** by running ML directly on encrypted data with CKKS: the server never decrypts, the client holds the only secret key, and predictions remain accurate enough for real use.
+
+---
+
+
 ---
 ## What’s included
 - FastAPI server that loads client-provided CKKS context + eval keys and runs encrypted LR/NN.
@@ -96,10 +118,7 @@ Real-World Impact
 **This project solves this** by running ML directly on encrypted data with CKKS: the server never decrypts, the client holds the only secret key, and predictions remain accurate enough for real use.
 
 ---
-## Who this is for
-- 🏥 Hospitals: run cloud inference without exposing PHI
-- 🏦 Banks: offload models without sharing transactions
-- 🛡️ Insurers: risk scoring without revealing customer data
+
 
 ---
 ## HE / Model notes
