@@ -175,13 +175,13 @@ Uses `data/raw/heart_disease.csv` (UCI Heart Disease). Ensure it exists in that 
 
 ---
 
-🛡️ Privacy Guarantee
+## Privacy Guarantee
 
-✔ Server computes on encrypted vectors
-✔ Server never sees patient features
-✔ Only client holds secret key
-✔ Encrypted predictions returned to client
-✔ Fully aligns with GDPR Articles 9, 25, 32, 35
+-✔ Server computes on encrypted vectors
+-✔ Server never sees patient features
+-✔ Only client holds secret key
+-✔ Encrypted predictions returned to client
+-✔ Fully aligns with GDPR Articles 9, 25, 32, 35
 ---
 ## Status
 Scripts and dashboard run; encrypted outputs depend on current HE params and calibration. If you change CKKS parameters, regenerate context files and retrain/reevaluate.***
