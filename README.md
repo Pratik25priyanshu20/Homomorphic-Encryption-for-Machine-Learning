@@ -27,7 +27,7 @@ Real-World Impact
 
 **This project solves this** by running ML directly on encrypted data with CKKS: the server never decrypts, the client holds the only secret key, and predictions remain accurate enough for real use.
 
----
+
 
 
 ---
@@ -119,7 +119,29 @@ Real-World Impact
 
 ---
 
-
+HOMOMORPHIC_ENCRYPTION_ML/
+│
+├── api/                     # FastAPI encrypted inference server
+├── client/                  # Python SDK (encrypt → infer → decrypt)
+├── dashboard/               # Streamlit UI
+├── src/
+│   ├── models/              # Encrypted LR + NN implementations
+│   ├── data/                # Preprocessing & scaling
+│   └── utils/
+│
+├── scripts/
+│   ├── train_models.py
+│   ├── train_he_nn.py
+│   ├── run_client_demo.py
+│   ├── evaluate_encrypted_vs_plain.py
+│   ├── calibrate_models.py
+│
+├── models/
+│   ├── plaintext/           # Scaler, LR, NN, HE parameters
+│   └── encrypted/           # context.bin, galois.bin, relin.bin
+│
+└── data/
+    └── raw/heart_disease.csv
 ---
 ## HE / Model notes
 - Scheme: CKKS (TenSEAL 0.3.x), 128-bit security.  
@@ -151,6 +173,15 @@ Real-World Impact
 ## Data
 Uses `data/raw/heart_disease.csv` (UCI Heart Disease). Ensure it exists in that path.
 
+---
+
+🛡️ Privacy Guarantee
+
+✔ Server computes on encrypted vectors
+✔ Server never sees patient features
+✔ Only client holds secret key
+✔ Encrypted predictions returned to client
+✔ Fully aligns with GDPR Articles 9, 25, 32, 35
 ---
 ## Status
 Scripts and dashboard run; encrypted outputs depend on current HE params and calibration. If you change CKKS parameters, regenerate context files and retrain/reevaluate.***
