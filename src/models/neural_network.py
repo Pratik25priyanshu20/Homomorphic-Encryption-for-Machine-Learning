@@ -14,16 +14,19 @@ from time import time
 
 
 class HeartNN(nn.Module):
-    """Simple Feedforward NN: 13 → 8 → 1"""
-    def __init__(self, input_dim, hidden_dim=8):
+    """Feedforward NN: 13 → h1 → h2 → 1"""
+    def __init__(self, input_dim, hidden_dims=(16, 16)):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        h1, h2 = hidden_dims
+        self.fc1 = nn.Linear(input_dim, h1)
+        self.fc2 = nn.Linear(h1, h2)
+        self.fc3 = nn.Linear(h2, 1)
         self.act = nn.ReLU()
-        self.fc2 = nn.Linear(hidden_dim, 1)
 
     def forward(self, x):
         x = self.act(self.fc1(x))
-        x = self.fc2(x)          # logits (no sigmoid here)
+        x = self.act(self.fc2(x))
+        x = self.fc3(x)          # logits (no sigmoid here)
         return x
 
 
@@ -35,13 +38,13 @@ class NeuralNetworkModel:
     - save_parameters()  ← **Required for HE inference**
     """
 
-    def __init__(self, input_dim, hidden_dim=8, learning_rate=0.001):
+    def __init__(self, input_dim, hidden_dims=(16, 16), learning_rate=0.001):
         self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
+        self.hidden_dims = hidden_dims
         self.learning_rate = learning_rate
 
         self.device = "cpu"
-        self.model = HeartNN(input_dim, hidden_dim).to(self.device)
+        self.model = HeartNN(input_dim, hidden_dims).to(self.device)
         self.loss_fn = nn.BCEWithLogitsLoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
 
@@ -118,21 +121,28 @@ class NeuralNetworkModel:
     def save_parameters(self, filepath: str):
         """
         Saves layer weights in a format usable by encrypted NN:
-           W1, b1 : (8 × 13), (8)
-           W2, b2 : (1 × 8), (1)
+           W1, b1 : (h1 × 13), (h1)
+           W2, b2 : (h2 × h1), (h2)
+           W3, b3 : (1 × h2), (1)
         """
 
-        W1 = self.model.fc1.weight.detach().numpy()
-        b1 = self.model.fc1.bias.detach().numpy()
+        # Normalize weights/biases to keep HE values small
+        W1 = self.model.fc1.weight.detach().numpy() / 2.0
+        b1 = self.model.fc1.bias.detach().numpy() / 2.0
 
-        W2 = self.model.fc2.weight.detach().numpy()
-        b2 = float(self.model.fc2.bias.detach().numpy()[0])
+        W2 = self.model.fc2.weight.detach().numpy() / 2.0
+        b2 = self.model.fc2.bias.detach().numpy() / 2.0
+
+        W3 = self.model.fc3.weight.detach().numpy() / 2.0
+        b3 = float((self.model.fc3.bias.detach().numpy() / 2.0)[0])
 
         params = {
             "W1": W1,
             "b1": b1,
             "W2": W2,
             "b2": b2,
+            "W3": W3,
+            "b3": b3,
         }
 
         joblib.dump(params, filepath)
@@ -147,6 +157,45 @@ class NeuralNetworkModel:
         self.model.fc1.weight.data = torch.tensor(params["W1"], dtype=torch.float32)
         self.model.fc1.bias.data = torch.tensor(params["b1"], dtype=torch.float32)
         self.model.fc2.weight.data = torch.tensor(params["W2"], dtype=torch.float32)
-        self.model.fc2.bias.data = torch.tensor([params["b2"]], dtype=torch.float32)
+        self.model.fc2.bias.data = torch.tensor(params["b2"], dtype=torch.float32)
+        self.model.fc3.weight.data = torch.tensor(params["W3"], dtype=torch.float32)
+        self.model.fc3.bias.data = torch.tensor([params["b3"]], dtype=torch.float32)
 
         print(f"📥 Loaded NN parameters from: {filepath}")
+
+    # ======================================================
+    # Save/load model checkpoints (state dict or checkpoint)
+    # ======================================================
+    def save(self, filepath: str, include_optimizer: bool = False):
+        """
+        Save a raw state_dict (default) or a checkpoint with optimizer state.
+        """
+        if include_optimizer:
+            checkpoint = {
+                "model_state_dict": self.model.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "input_dim": self.input_dim,
+                "hidden_dims": self.hidden_dims,
+                "learning_rate": self.learning_rate,
+            }
+            torch.save(checkpoint, filepath)
+        else:
+            torch.save(self.model.state_dict(), filepath)
+        print(f"💾 Saved NN checkpoint to: {filepath}")
+
+    def load(self, filepath: str):
+        """
+        Load either a raw state_dict or a checkpoint dict with model_state_dict.
+        """
+        state = torch.load(filepath, map_location=self.device)
+
+        if isinstance(state, dict) and "model_state_dict" in state:
+            self.model.load_state_dict(state["model_state_dict"])
+            if "optimizer_state_dict" in state:
+                self.optimizer.load_state_dict(state["optimizer_state_dict"])
+            print(f"📂 Loaded NN checkpoint from: {filepath}")
+        else:
+            self.model.load_state_dict(state)
+            print(f"📂 Loaded NN weights (state_dict) from: {filepath}")
+
+        self.model.to(self.device)

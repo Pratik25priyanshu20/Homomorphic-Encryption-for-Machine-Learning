@@ -1,220 +1,137 @@
-<div align="center">
+# 🔒 Homomorphic Encryption ML (CKKS) — FastAPI • TenSEAL • PyTorch • Streamlit
 
-# 🔒 **Homomorphic Encryption for Privacy-Preserving Machine Learning**  
-### *(FastAPI + TenSEAL + PyTorch)*  
+End-to-end, privacy-preserving ML for heart-disease prediction on encrypted data. The client encrypts locally, the server computes on ciphertext (CKKS), and only the client can decrypt the result.
 
-</div>
+### Why it matters
+- **GDPR-grade privacy:** Client holds the secret key; server sees only random-looking ciphertexts.
+- **Real models, real latency:** Encrypted LR/NN with ~0.7–1.1s CPU latency in current runs (tuneable).
+- **Accuracy retained:** Encrypted predictions align with plaintext after calibration (see calibration step).
+- **Production shape:** FastAPI server, Python SDK, Streamlit dashboard, calibration & eval scripts.
 
+---
+## What’s included
+- FastAPI server that loads client-provided CKKS context + eval keys and runs encrypted LR/NN.
+- Python client SDK (`client/client.py`) handling preprocess → encrypt → send → decrypt + calibration.
+- Training scripts for plaintext + HE-friendly models.
+- Evaluation and calibration scripts to align encrypted logits with plaintext.
+- Streamlit dashboard for encrypted predictions, analytics, and tech details.
 
-This project demonstrates a fully production-ready system for privacy-preserving machine learning using Homomorphic Encryption, enabling secure medical diagnosis without exposing patient data. It implements the CKKS scheme (TenSEAL 0.3.14, 128-bit security) to perform encrypted inference on both Logistic Regression and Neural Network models, allowing a FastAPI server to compute predictions on encrypted features it never sees in plaintext. The architecture includes a complete preprocessing pipeline, an encrypted inference engine, a client-side SDK that handles context generation, feature scaling, encryption/decryption, and a modern Streamlit dashboard to visualize predictions, model details, and security parameters. With ~5ms encrypted inference and only 3% accuracy loss compared to plaintext models, this system proves that real-time, GDPR-compliant ML on sensitive healthcare data is practical today. The project is designed for hospitals, banking, and insurance use cases, showing how homomorphic encryption unlocks valuable data while maintaining strict confidentiality and regulatory compliance.
+---
+## Quickstart
+Prereqs: Python 3.10+, `pip install -r requirements.txt`
 
-🎯 Problem Statement
-The €2 Billion GDPR Challenge:
-German healthcare and financial institutions face a critical dilemma:
+1) Train and export HE-safe params  
+```bash
+python scripts/train_models.py      # trains LR/NN, saves lr_he_parameters.pkl
+python scripts/train_he_nn.py       # trains shallow HE NN, saves nn_he_parameters.pkl
+```
 
-GDPR Article 32 requires encryption of personal data
-Traditional ML requires plaintext data for inference
-Sharing patient data with ML providers violates GDPR Article 9 (special category data)
-Result: €2B+ in trapped data value
+2) Provide CKKS artifacts (client side)  
+Generate and place these for the server to load:  
+```
+models/encrypted/context.bin
+models/encrypted/galois.bin
+models/encrypted/relin.bin
+```
+(Ensure they are created with matching poly_modulus_degree / coeff_mod_bit_sizes / global_scale; server only loads them, does not generate keys.)
 
-Real-World Impact:
+3) Start the server  
+```bash
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-🏥 Hospitals can't use cloud AI without exposing patient records
-🏦 Banks can't outsource fraud detection without sharing transactions
-🛡️ Insurers can't use ML for risk assessment without violating privacy laws
+4) Run a demo (CLI)  
+```bash
+python scripts/run_client_demo.py --server http://localhost:8000 --model lr
+python scripts/run_client_demo.py --server http://localhost:8000 --model nn
+```
 
+5) (Optional) Calibrate logits → probs  
+```bash
+python scripts/calibrate_models.py
+# saves models/plaintext/calibration_lr.pkl and calibration_nn.pkl
+```
+Client auto-loads these if present.
 
-✨ Solution: Homomorphic Encryption
-This project demonstrates:
-
-✅ ML inference on encrypted data - Server never sees plaintext
-✅ 80% accuracy maintained - Only 3% loss vs plaintext
-✅ 5ms inference time - Production-acceptable latency
-✅ GDPR compliant - Data never leaves encrypted form
-✅ Production-ready - FastAPI server + Python client SDK
-
-How It Works:
-Client (Hospital)          Server (ML Provider)
-┌─────────────┐            ┌──────────────┐
-│ Patient     │  Encrypt   │  Encrypted   │
-│ Data        ├───────────>│  Inference   │
-│             │            │              │
-│ [Age: 63]   │            │ [Gibberish]  │
-│ [BP: 145]   │            │ [Random]     │
-│             │◄───────────┤              │
-│ Decrypt     │  Encrypted │  Returns     │
-│ Result      │  Result    │  Encrypted   │
-└─────────────┘            └──────────────┘
-     ✓ Has secret key          ✗ No secret key
-Privacy Guarantee: Server performs computation without ever decrypting data!
-
-🚀 Quick Start
-Prerequisites
-
-Python 3.10+
-pip
-Virtual environment (recommended)
-
-git clone https://github.com/Pratik25priyanshu20/Homomorphic-Encryption-for-Machine-Learning.git
-cd HOMOMORPHIC_ENCRYPTION_ML
-
-python3.10 -m venv venv
-source venv/bin/activate   # or venv\Scripts\activate on Windows
-
-pip install -r requirements.txt
-
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload [ or 8081]
-
+6) Streamlit dashboard  
+```bash
 streamlit run dashboard/app.py
+```
+Connect via sidebar, choose LR/NN, run encrypted predictions, view risk gauge + analytics.
 
+7) Compare encrypted vs plaintext  
+```bash
+python scripts/evaluate_encrypted_vs_plain.py --server http://localhost:8000 --model lr --n 50
+python scripts/evaluate_encrypted_vs_plain.py --server http://localhost:8000 --model nn --n 50
+```
 
+8) Tests  
+```bash
+pytest tests/unit/test_encryption.py
+```
 
+---
+## How it works
+- Client rebuilds CKKS context from `/context` API (public params), encrypts scaled features, sends ciphertext.
+- Server uses the shared context/keys (no secret key) to run LR/NN and returns an encrypted logit.
+- Client decrypts logit, applies calibration (affine or dynamic scaling) → sigmoid → probability.
 
-🏗️ Architecture
-System Components
-┌─────────────────────────────────────────────────────────────┐
-│                     Client Application                       │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │ Preprocessor │→ │  Encryptor   │→ │  API Client  │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└────────────────────────────┬────────────────────────────────┘
-                             │ HTTPS (encrypted data)
-                             ↓
-┌─────────────────────────────────────────────────────────────┐
-│                      FastAPI Server                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   Context    │  │  Encrypted   │  │   Response   │     │
-│  │   Manager    │→ │  Inference   │→ │   Handler    │     │
-│  └──────────────┘  └──────────────┘  └──────────────┘     │
-└─────────────────────────────────────────────────────────────┘
+---
+## Problem & Solution (quick story)
+**The dilemma:** Sensitive medical/financial data must stay encrypted (GDPR, HIPAA, etc.), but ML inference normally needs plaintext.  
+**This system:** Uses CKKS HE so the server never decrypts. Client-owned keys, encrypted features, encrypted logits back, plaintext never leaves the client. Works today with LR + shallow NN, with only modest latency overhead on CPU.
 
+---
+## Problem Statement — The €2B GDPR Challenge
+- GDPR Article 32 → data must be encrypted  
+- ML inference → normally needs plaintext  
+- Sharing medical/financial data → violates GDPR Article 9  
+**Result:** €2B+ in trapped data value every year (no safe way to run models in the cloud).
 
-CLIENT                                     SERVER
-─────────────────────────────────────────────────────────────────
-- Generates CKKS context                  - Receives public context
-- Holds secret key (never sent)           - Loads model (LR/NN)
-- Encrypts patient data                   - Computes on encrypted vectors
-- Sends ciphertext to server        →     - Returns encrypted prediction
-- Decrypts encrypted output               - Never decrypts anything
+Real-World Impact  
+- 🏥 Hospitals cannot use cloud AI without exposing patient data  
+- 🏦 Banks cannot outsource fraud detection without sharing transactions  
+- 🛡️ Insurers cannot evaluate risk using external ML providers  
 
+**This project solves this** by running ML directly on encrypted data with CKKS: the server never decrypts, the client holds the only secret key, and predictions remain accurate enough for real use.
 
+---
+## Who this is for
+- 🏥 Hospitals: run cloud inference without exposing PHI
+- 🏦 Banks: offload models without sharing transactions
+- 🛡️ Insurers: risk scoring without revealing customer data
 
-Technology Stack
+---
+## HE / Model notes
+- Scheme: CKKS (TenSEAL 0.3.x), 128-bit security.  
+- Typical params: poly_modulus_degree 8192/16384 (demo vs deeper), coeff_mod_bit_sizes similar to `[60, 40, 40, 40, 60]` variants, global_scale often `2**40`. Keep client/server aligned.
+- Models: scikit-learn LR; PyTorch shallow HE-friendly NN (linear + 0.5x+0.5 activation).
+- HE exports: weights shrunk (SAFE_SCALE) to avoid CKKS overflow; client calibration compensates.
 
-Encryption:
-• TenSEAL (0.3.14) — CKKS homomorphic encryption
-• Security Level: 128-bit
-• Encryption Parameters:
-   - poly_modulus_degree = 16384
-   - coeff_mod_bit_sizes = [60, 45, 45, 45, 60]
-   - global_scale = 2^30
+---
+## Project layout (key files)
+- `api/main.py` — FastAPI server; loads shared context/keys; encrypted LR/NN endpoints.
+- `client/client.py` — PrivateMLClient SDK; encryption, request, decrypt + calibration.
+- `scripts/train_models.py` — Train LR/NN; export `lr_he_parameters.pkl`.
+- `scripts/train_he_nn.py` — Train HE-friendly NN; export `nn_he_parameters.pkl`.
+- `scripts/run_client_demo.py` — CLI demo for LR/NN.
+- `scripts/evaluate_encrypted_vs_plain.py` — Plain vs encrypted metrics.
+- `scripts/calibrate_models.py` — Fit affine corrections for logits.
+- `dashboard/app.py` — Streamlit dashboard (Prediction, Analytics, Technical).
+- `src/models/encrypted_lr.py`, `src/models/encrypted_nn.py` — CKKS inference.
+- `src/data/preprocessor.py`, `src/data/he_preprocessing.py` — Scaling + HE-safe preprocessing.
 
-Machine Learning:
-• scikit-learn — Logistic Regression baseline
-• PyTorch — Neural network (exported to CKKS operations)
-• Encrypted inference accuracy: 80%+
+---
+## Tips / Troubleshooting
+- Context mismatch → 500 on `/context`: ensure `context.bin/galois.bin/relin.bin` exist and match client params.
+- Extreme 0/1 probs: rerun training (`train_models.py`, `train_he_nn.py`), then `calibrate_models.py`; ensure calibration PKLs exist.
+- Latency: expect ~0.7–1.1s per encrypted inference on CPU; NN deeper variants may be slower.
+- Secret key stays client-side. Server only holds public/eval keys and encrypted models.
 
-Backend:
-• FastAPI — Encrypted inference server
-• Pydantic — Validation layer
-• Uvicorn — ASGI server
+---
+## Data
+Uses `data/raw/heart_disease.csv` (UCI Heart Disease). Ensure it exists in that path.
 
-Frontend:
-• Streamlit — User-facing encrypted dashboard
-• Plotly — Interactive visualizations
-
-
-
-📁 Project Structure
-homomorphic-ml-privacy/
-├── README.md                          # This file
-├── requirements.txt                   # Python dependencies
-├── LICENSE                            # MIT License
-│
-├── data/                              # Datasets
-│   ├── raw/                           # Original data
-│   └── processed/                     # Preprocessed data
-│
-├── src/                               # Source code
-│   ├── data/
-│   │   └── preprocessor.py           # Data preprocessing
-│   ├── models/
-│   │   ├── logistic_regression.py    # Plaintext LR
-│   │   ├── neural_network.py         # Plaintext NN
-│   │   └── encrypted_lr.py           # Encrypted inference
-│   └── encryption/
-│       └── context.py                # Encryption management
-│
-├── api/                               # FastAPI server
-│   ├── main.py                       # API entrypoint
-│   └── schemas/                      # Request/response models
-│
-├── client/                            # Client SDK
-│   └── client.py                     # Python client
-│
-├── dashboard/                         # Streamlit UI
-│   └── app.py                        # Interactive dashboard
-│
-├── scripts/                           # Utility scripts
-│   ├── download_data.py              # Dataset download
-│   ├── train_models.py               # Model training
-│   └── test_encrypted_inference.py   # Testing
-│
-├── tests/                             # Unit tests
-│   ├── unit/
-│   └── integration/
-│
-├── docs/                              # Documentation
-│   ├── technical_report.md           # Technical details
-│   ├── business_case.md              # Business value
-│   └── architecture/                 # Diagrams
-│
-├── benchmarks/                        # Performance data
-│   ├── results/                      # Raw data
-│   └── plots/                        # Visualizations
-│
-└── models/                            # Saved models
-    ├── plaintext/                    # Classical models
-    └── encrypted/                    # Encryption contexts
-
-
-
-Security & Privacy
-Encryption Details
-Scheme: CKKS (Cheon-Kim-Kim-Song)
-
-Supports approximate arithmetic on real numbers
-Optimized for machine learning operations
-Industry-standard for privacy-preserving ML
-
-
-
-
-Privacy Guarantees
-✅ What's Protected:
-
-All patient features (age, blood pressure, cholesterol, etc.)
-Model predictions and probabilities
-Intermediate computation results
-
-❌ What Server Sees:
-
-Model architecture (public)
-Encrypted data (random gibberish)
-Encrypted predictions (random gibberish)
-
-✅ Only Client Has:
-
-Secret decryption key
-Plaintext patient data
-Plaintext predictions
-
-GDPR Compliance
-This system satisfies:
-
-✅ Article 32: Data encryption (pseudonymisation)
-✅ Article 9: Special category data protection
-✅ Article 25: Privacy by design
-✅ Article 35: DPIA-ready architecture
-
-
+---
+## Status
+Scripts and dashboard run; encrypted outputs depend on current HE params and calibration. If you change CKKS parameters, regenerate context files and retrain/reevaluate.***

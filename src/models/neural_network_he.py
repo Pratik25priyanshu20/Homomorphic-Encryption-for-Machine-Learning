@@ -1,91 +1,140 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
 import joblib
-from pathlib import Path
+
+
+# ============================================================
+#   HE-SAFE NEURAL NETWORK FOR CKKS ENCRYPTED INFERENCE
+# ============================================================
+# Matches EXACTLY the architecture used on the encrypted server.
+#
+#   INPUT (13)
+#      ↓
+#   Linear(13 → 3)
+#      ↓
+#   Activation:  0.5*z + 0.5      (HE-friendly)
+#      ↓
+#   Linear(3 → 1)
+#      ↓
+#   Output: raw logit
+#
+# ============================================================
 
 
 class HEFriendlyNN(nn.Module):
-    """
-    HE-Friendly Neural Network
-    Architecture:
-        Input 13 → Hidden 4 → Output 1
-    Nonlinear activation:
-        Square (x^2) which is very HE-friendly (low multiplicative depth)
-    """
-
-    def __init__(self, input_dim=13, hidden_dim=4):
+    def __init__(self, input_dim=13, hidden_dim=3):
         super().__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 1)
-        self.activation = lambda x: x * x  # square activation
+        self.fc1 = nn.Linear(input_dim, hidden_dim)  # shape: (3,13)
+        self.fc2 = nn.Linear(hidden_dim, 1)          # shape: (1,3)
 
     def forward(self, x):
+        # z1 = W1*x + b1
         z1 = self.fc1(x)
-        a1 = self.activation(z1)
-        out = self.fc2(a1)
-        return out  # raw score (we convert later)
 
+        # HE-FRIENDLY ACTIVATION: 0.5*z + 0.5
+        h = 0.5 * z1 + 0.5
+
+        # Output layer
+        logit = self.fc2(h)
+        return logit
+
+
+# ============================================================
+#   TRAINER WITH STRICT HE CONSTRAINTS
+# ============================================================
 
 class HEFriendlyNNTrainer:
 
-    def __init__(self, input_dim=13, hidden_dim=4, lr=0.001):
+    def __init__(self, input_dim=13, hidden_dim=3, lr=0.0005, clip_value=0.25):
         self.model = HEFriendlyNN(input_dim, hidden_dim)
+        self.lr = lr
+        self.clip_value = clip_value
+
         self.criterion = nn.BCEWithLogitsLoss()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
 
-    def train(self, X_train, y_train, X_val=None, y_val=None, epochs=40, batch_size=32):
+    # ---------------------------
+    #      TRAINING LOOP
+    # ---------------------------
+    def train(self, X_train, y_train, X_val, y_val, epochs=40, batch_size=32):
+
         X_train = torch.tensor(X_train, dtype=torch.float32)
-        y_train = torch.tensor(y_train, dtype=torch.float32).view(-1, 1)
+        y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
 
-        n = len(X_train)
-        for epoch in range(1, epochs + 1):
-            permutation = torch.randperm(n)
-            losses = []
+        X_val = torch.tensor(X_val, dtype=torch.float32)
+        y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
-            for i in range(0, n, batch_size):
-                idx = permutation[i:i + batch_size]
-                batch_x = X_train[idx]
-                batch_y = y_train[idx]
+        dataset = torch.utils.data.TensorDataset(X_train, y_train)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-                preds = self.model(batch_x)
-                loss = self.criterion(preds, batch_y)
+        for epoch in range(epochs):
+            self.model.train()
+            running_loss = 0.0
 
+            for xb, yb in loader:
                 self.optimizer.zero_grad()
+
+                logits = self.model(xb)
+                loss = self.criterion(logits, yb)
                 loss.backward()
+
+                # 🔥 CRITICAL: weight clipping BEFORE update
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.clip_value)
                 self.optimizer.step()
 
-                losses.append(loss.item())
+                # 🔥 Clip weights themselves AFTER update
+                with torch.no_grad():
+                    for p in self.model.parameters():
+                        p.clamp_(-self.clip_value, self.clip_value)
 
-            if epoch % 10 == 0:
-                avg_loss = np.mean(losses)
-                print(f"Epoch {epoch}/{epochs} - Loss: {avg_loss:.4f}")
+                running_loss += loss.item()
 
-        print("✓ Training complete")
+            # -------------------------
+            # Validation
+            # -------------------------
+            self.model.eval()
+            with torch.no_grad():
+                val_logits = self.model(X_val)
+                val_loss = self.criterion(val_logits, y_val)
+                preds = (torch.sigmoid(val_logits) >= 0.5).float()
+                val_acc = (preds == y_val).float().mean().item()
 
+            print(f"Epoch [{epoch+1}/{epochs}]  "
+                  f"Loss: {running_loss/len(loader):.4f}  "
+                  f"Val Loss: {val_loss:.4f}  "
+                  f"Val Acc: {val_acc:.4f}")
+
+    # ---------------------------
+    #       EVALUATION
+    # ---------------------------
     def evaluate(self, X_test, y_test):
         X_test = torch.tensor(X_test, dtype=torch.float32)
-        y_test = torch.tensor(y_test, dtype=torch.float32).view(-1, 1)
+        y_test = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
 
+        self.model.eval()
         with torch.no_grad():
             logits = self.model(X_test)
-            preds = (torch.sigmoid(logits) > 0.5).float()
+            preds = (torch.sigmoid(logits) >= 0.5).float()
+            return (preds == y_test).float().mean().item()
 
-        accuracy = (preds == y_test).float().mean().item()
-        print(f"Validation Accuracy: {accuracy*100:.2f}%")
+    # ---------------------------
+    #      SAVE PARAMETERS
+    # ---------------------------
+    def save_parameters(self, path):
+        W1 = self.model.fc1.weight.detach().numpy()
+        b1 = self.model.fc1.bias.detach().numpy()
 
-        return accuracy
-
-    def save_parameters(self, path="models/plaintext/nn_he_parameters.pkl"):
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        W2 = self.model.fc2.weight.detach().numpy()
+        b2 = self.model.fc2.bias.detach().numpy()
 
         params = {
-            "W1": self.model.fc1.weight.detach().numpy(),
-            "b1": self.model.fc1.bias.detach().numpy(),
-            "W2": self.model.fc2.weight.detach().numpy(),
-            "b2": self.model.fc2.bias.detach().numpy(),
+            "W1": W1,
+            "b1": b1,
+            "W2": W2,
+            "b2": b2
         }
 
         joblib.dump(params, path)
-        print(f"💾 Saved HE-friendly parameters → {path}")
+        print(f"💾 Saved HE parameters → {path}")

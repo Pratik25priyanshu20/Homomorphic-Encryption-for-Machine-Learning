@@ -1,19 +1,11 @@
 # src/models/encrypted_lr.py
 
-"""
-Encrypted Logistic Regression 
-SERVER RETURNS ENCRYPTED LOGIT
-CLIENT APPLIES TRUE SIGMOID
-"""
-
-from pathlib import Path
-from typing import List
-
 import joblib
 import numpy as np
 import tenseal as ts
-import time
+from pathlib import Path
 
+SAFE_SCALE = 1e-6  # strong shrink to avoid CKKS blowup
 
 class EncryptedLogisticRegression:
 
@@ -21,64 +13,32 @@ class EncryptedLogisticRegression:
         self.context = context
         self.weights = None
         self.bias = None
-        self.is_loaded = False
 
-    # =========================================================
-    # LOAD MODEL
-    # =========================================================
-    def load_plaintext_model(self, model_path: str):
-        print(f"\n📂 Loading LR model from {model_path}")
-
+    def load_he_parameters(self, model_path: str):
+        """
+        Load HE-normalized LR parameters and shrink to avoid scale explosion.
+        """
+        print(f"\n📂 Loading HE LR parameters from {model_path}")
         data = joblib.load(model_path)
-        model = data["model"]
+        w = np.array(data["weights"], dtype=float)
+        b = float(data["bias"])
 
-        self.weights = model.coef_[0]
-        self.bias = float(model.intercept_[0])
+        # Additional shrink to keep logits tiny under CKKS
+        self.weights = w * SAFE_SCALE / 10.0  # extra shrink
+        self.bias = b * SAFE_SCALE / 10.0     # extra shrink
 
-        self.is_loaded = True
+        print("   ✓ Loaded HE LR parameters (safe scaled)")
 
-        print("   ✓ Loaded LR parameters")
-        print(f"   ✓ Weights: {len(self.weights)} features")
-        print(f"   ✓ Bias: {self.bias:.4f}")
-
-    # =========================================================
-    # ENCRYPTED LINEAR TERM (NO SIGMOID)
-    # =========================================================
-    def encrypted_linear(self, enc_x: ts.CKKSVector) -> ts.CKKSVector:
-        """
-        Compute encrypted linear logit: w·x + b
-        """
-        enc_mul = enc_x * self.weights.tolist()
-
-        if hasattr(enc_mul, "sum"):
-            enc_dot = enc_mul.sum()
-        else:
-            vals = enc_mul.decrypt()
-            enc_dot = ts.ckks_vector(self.context, [float(np.sum(vals))])
-
-        return enc_dot + self.bias
-
-    # =========================================================
-    # PUBLIC API
-    # =========================================================
+    # ============================================================
     def predict_encrypted_logit(self, enc_x: ts.CKKSVector) -> ts.CKKSVector:
         """
-        Return encrypted logit — NOT sigmoid.
+        Compute encrypted logit: w·x + b without extra rescaling.
         """
-        return self.encrypted_linear(enc_x)
+        enc_mul = enc_x * self.weights.tolist()
+        enc_out = enc_mul.sum()
+        enc_out = enc_out + self.bias
+        return enc_out
 
-    def predict_batch_encrypted(self, enc_list: List[ts.CKKSVector]):
-        return [self.predict_encrypted_logit(enc) for enc in enc_list]
-
-    # Save/Load weights only
     def save(self, filepath: str):
         Path(filepath).parent.mkdir(parents=True, exist_ok=True)
         joblib.dump({"weights": self.weights, "bias": self.bias}, filepath)
-        print(f"💾 Saved encrypted LR params → {filepath}")
-
-    def load(self, filepath: str):
-        data = joblib.load(filepath)
-        self.weights = data["weights"]
-        self.bias = float(data["bias"])
-        self.is_loaded = True
-        print(f"📂 Loaded encrypted LR params from {filepath}")

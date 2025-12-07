@@ -27,7 +27,6 @@ class PredictionRequest(BaseModel):
 # ============================================================
 # Global objects
 # ============================================================
-context_manager = EncryptionContextManager("128bit")
 context: ts.Context | None = None
 
 lr_model: EncryptedLogisticRegression | None = None
@@ -46,24 +45,47 @@ def initialize_server():
     print("====================================================\n")
 
     # -----------------------------------------------------
-    # 1. Build NEW public context (no secret key)
+    # 1. Load client-provided CKKS context + evaluation keys
     # -----------------------------------------------------
-    print("🔐 Creating CKKS context...")
-    context = context_manager.create_context()
-
+    print("🔐 Loading shared CKKS context + eval keys...")
     ctx_path = Path("models/encrypted/context.bin")
-    ctx_path.parent.mkdir(parents=True, exist_ok=True)
+    galois_path = Path("models/encrypted/galois.bin")
+    relin_path = Path("models/encrypted/relin.bin")
 
-    # Save public context
-    context_manager.save_context(str(ctx_path))
-    print(f"✓ Public CKKS context saved → {ctx_path}\n")
+    try:
+        with open(ctx_path, "rb") as f:
+            context_bytes = f.read()
+        ctx = ts.context_from(context_bytes)
+
+        if galois_path.exists():
+            with open(galois_path, "rb") as f:
+                ctx.load_galois_keys(f.read())
+        if relin_path.exists():
+            with open(relin_path, "rb") as f:
+                ctx.load_relin_keys(f.read())
+
+        ctx.auto_relin = True
+        context = ctx
+        print(f"✓ Loaded CKKS context from {ctx_path}")
+        if galois_path.exists():
+            print(f"✓ Loaded Galois keys from {galois_path}")
+        if relin_path.exists():
+            print(f"✓ Loaded Relinearization keys from {relin_path}")
+        print("")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load shared CKKS context/keys: {e}")
 
     # -----------------------------------------------------
     # 2. Load Logistic Regression
     # -----------------------------------------------------
     print("📘 Loading Logistic Regression model...")
     lr_model = EncryptedLogisticRegression(context)
-    lr_model.load_plaintext_model("models/plaintext/logistic_regression.pkl")
+    # Prefer HE-normalized parameters if present; otherwise fallback.
+    he_lr_path = "models/plaintext/lr_he_parameters.pkl"
+    if Path(he_lr_path).exists():
+        lr_model.load_he_parameters(he_lr_path)
+    else:
+        lr_model.load_plaintext_model("models/plaintext/logistic_regression.pkl")
     print("✓ Logistic Regression ready.\n")
 
     # -----------------------------------------------------
@@ -98,7 +120,12 @@ def get_public_context():
     SECRET KEY is never included.
     """
     try:
-        return context_manager.get_context_info()
+        mgr = EncryptionContextManager()
+        info = mgr.get_context_info()
+        return {
+            "poly_modulus_degree": info["poly_modulus_degree"],
+            "coeff_mod_bit_sizes": info["coeff_mod_bit_sizes"],
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -118,7 +145,7 @@ def predict_lr(request: PredictionRequest):
         raise HTTPException(400, f"Invalid encrypted input: {e}")
 
     try:
-        # FIXED — call the correct method
+        # Return encrypted logit; client applies sigmoid
         enc_out = lr_model.predict_encrypted_logit(enc_x)
 
         pred_bytes = list(enc_out.serialize())
@@ -144,7 +171,7 @@ def predict_nn(request: PredictionRequest):
 
     # Run encrypted NN inference
     try:
-        enc_out = nn_model.predict_encrypted(enc_x)
+        enc_out = nn_model.predict_logit_encrypted(enc_x)
         pred_bytes = list(enc_out.serialize())
         return {"encrypted_prediction": pred_bytes}
     except Exception as e:

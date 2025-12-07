@@ -16,6 +16,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.data.preprocessor import HeartDiseasePreprocessor
+import numpy as np
+import joblib
 from src.models.logistic_regression import LogisticRegressionModel
 from src.models.neural_network import NeuralNetworkModel
 import pandas as pd
@@ -49,6 +51,17 @@ def main():
     lr_metrics = lr.evaluate(X_test, y_test)
     lr.save("models/plaintext/logistic_regression.pkl")
 
+    # Export SAFE LR params for encrypted inference
+    w = lr.model.coef_[0].astype(np.float64)
+    b = float(lr.model.intercept_[0])
+
+    SAFE_SCALE = 1e-6
+    w = w * SAFE_SCALE
+    b = b * SAFE_SCALE
+
+    joblib.dump({"weights": w.flatten(), "bias": b}, "models/plaintext/lr_he_parameters.pkl")
+    print("   ✓ Saved HE-safe LR parameters → models/plaintext/lr_he_parameters.pkl")
+
     print(f"   ✓ LR Accuracy: {lr_metrics['accuracy']*100:.2f}%")
 
     # ===============================================================
@@ -58,7 +71,7 @@ def main():
 
     nn = NeuralNetworkModel(
         input_dim=X_train.shape[1],
-        hidden_dim=8,
+        hidden_dims=(16, 16),
         learning_rate=0.001
     )
 

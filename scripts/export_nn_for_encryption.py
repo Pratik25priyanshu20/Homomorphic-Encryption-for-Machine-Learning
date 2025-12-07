@@ -21,21 +21,24 @@ def export_nn_parameters(model_path: str, output_path: str):
     print(f"\n📂 Loading trained model from: {model_path}")
     dummy_model = NeuralNetworkModel(input_dim=13)  # input_dim=13 fixed for dataset
     dummy_model.load(model_path)
-
     model = dummy_model.model
     model.eval()
 
     # Extract weights
-    W1 = model.fc1.weight.detach().cpu().numpy()      # shape (8, 13)
-    b1 = model.fc1.bias.detach().cpu().numpy()        # shape (8,)
-    W2 = model.fc2.weight.detach().cpu().numpy()      # shape (1, 8)
-    b2 = model.fc2.bias.detach().cpu().numpy().item() # scalar
+    W1 = model.fc1.weight.detach().cpu().numpy()
+    b1 = model.fc1.bias.detach().cpu().numpy()
+    W2 = model.fc2.weight.detach().cpu().numpy()
+    b2 = model.fc2.bias.detach().cpu().numpy()
+    W3 = model.fc3.weight.detach().cpu().numpy()
+    b3 = model.fc3.bias.detach().cpu().numpy().item()
 
     print("\n📐 Extracted layer shapes:")
     print(f"W1: {W1.shape}")
     print(f"b1: {b1.shape}")
     print(f"W2: {W2.shape}")
-    print(f"b2: {type(b2)}")
+    print(f"b2: {b2.shape}")
+    print(f"W3: {W3.shape}")
+    print(f"b3: {type(b3)}")
 
     # Save dictionary
     params = {
@@ -43,6 +46,8 @@ def export_nn_parameters(model_path: str, output_path: str):
         "b1": b1,
         "W2": W2,
         "b2": b2,
+        "W3": W3,
+        "b3": b3,
     }
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)

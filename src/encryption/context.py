@@ -19,12 +19,14 @@ class EncryptionContextManager:
 
         if security_level == "128bit":
             self.poly_modulus_degree = 16384
-            self.coeff_mod_bit_sizes = [60, 45, 45, 45, 60]
+            # Extra levels to support the deeper NN without scale exhaustion.
+            # Using more 40-bit primes keeps depth while controlling noise.
+            self.coeff_mod_bit_sizes = [60, 40, 40, 40, 40, 40, 40, 40, 60]
         else:
             raise ValueError("Unsupported security level")
 
         # Lower starting scale → safer NN inference
-        self.global_scale = 2 ** 30
+        self.global_scale = 2 ** 40
         self._ctx = None
 
     # ----------------------------------------------------------
@@ -40,6 +42,8 @@ class EncryptionContextManager:
         ctx.global_scale = self.global_scale
         ctx.generate_galois_keys()
         ctx.generate_relin_keys()
+        # Drop the secret key so the server cannot decrypt client data.
+        ctx.make_context_public()
         ctx.auto_relin = True
 
         self._ctx = ctx
